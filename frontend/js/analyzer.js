@@ -2,22 +2,24 @@ let currentRecordId = null;
 let currentPdfServerFile = null;
 let currentPdfOriginalName = null;
 
+const ECL_CAPACITY_MAP = {
+  L: "~7% codeword dapat dikoreksi",
+  M: "~15% codeword dapat dikoreksi",
+  Q: "~25% codeword dapat dikoreksi",
+  H: "~30% codeword dapat dikoreksi",
+};
+
 function switchInputTab(tabId, btnEl) {
-  document.querySelectorAll(".input-tab").forEach(el => el.style.display = "none");
-  document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+  document.querySelectorAll(".input-tab").forEach((el) => (el.style.display = "none"));
+  document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
   document.getElementById(tabId).style.display = "block";
   btnEl.classList.add("active");
-  if (tabId !== "tab-camera") stopCamera();
-}
 
-async function submitImageAnalysis() {
-  const fileInput = document.getElementById("image-input");
-  if (!fileInput.files.length) return alert("Pilih file gambar terlebih dahulu.");
-
-  const formData = new FormData();
-  formData.append("file", fileInput.files[0]);
-  formData.append("input_method", "upload");
-  await sendAnalysisRequest(`${API_BASE}/api/analyze/image`, formData);
+  if (tabId === "tab-camera") {
+    if (typeof startCamera === "function") startCamera();
+  } else {
+    if (typeof stopCamera === "function") stopCamera();
+  }
 }
 
 async function inspectPdfFile() {
@@ -68,10 +70,26 @@ function renderAnalysisResult(data) {
 
   const badge = document.getElementById("res-condition-badge");
   badge.textContent = data.condition;
-  badge.className = "badge " + (
-    data.condition === "Kondisi Baik" ? "badge-success" :
-    data.condition.includes("Gangguan") ? "badge-warning" : "badge-danger"
-  );
+  badge.className =
+    "badge " +
+    (data.condition === "Kondisi Baik"
+      ? "badge-success"
+      : data.condition.includes("Gangguan")
+      ? "badge-warning"
+      : "badge-danger");
+
+  // Tampilkan Detected Error Correction Level (ECL Asli - Read-Only)
+  const detectedEcl = data.detected_ecl || data.qr_result?.detected_ecl || "M";
+  const eclEl = document.getElementById("res-detected-ecl");
+  if (eclEl) {
+    eclEl.textContent = `Level ${detectedEcl} (${ECL_CAPACITY_MAP[detectedEcl] || "~15%"})`;
+  }
+
+  // Set default dropdown Target ECL Regenerasi mengikuti ECL asli
+  const regenEcSelect = document.getElementById("regen-ec");
+  if (regenEcSelect && ["L", "M", "Q", "H"].includes(detectedEcl)) {
+    regenEcSelect.value = detectedEcl;
+  }
 
   // Gambar Asli
   document.getElementById("res-orig-img").src = `${API_BASE}${data.original_image_url}`;
@@ -96,7 +114,7 @@ function renderAnalysisResult(data) {
     regenBox.style.display = "block";
     document.getElementById("res-regen-img").src = `${API_BASE}${data.regenerated_image_url}?t=${Date.now()}`;
     document.getElementById("res-validation-badge").textContent = data.regeneration.validated
-      ? "Tervalidasi: Payload Identik dengan Sumber"
+      ? `Tervalidasi: Payload Identik dengan Sumber (ECL: ${data.regeneration.error_correction || detectedEcl})`
       : "Peringatan Validasi";
 
     payloadSection.style.display = "block";
@@ -122,35 +140,47 @@ function renderAnalysisResult(data) {
   if (data.analysis.visual_issues.length === 0) {
     issuesList.innerHTML = `<li style="color:var(--success);">Tidak ditemukan gangguan kualitas visual yang signifikan.</li>`;
   } else {
-    issuesList.innerHTML = data.analysis.visual_issues.map(i => `<li>${escapeHtml(i)}</li>`).join("");
+    issuesList.innerHTML = data.analysis.visual_issues.map((i) => `<li>${escapeHtml(i)}</li>`).join("");
   }
 }
 
 async function runOptionalPreprocessing() {
   if (!currentRecordId) return;
-  const selected = Array.from(document.querySelectorAll(".prep-chk:checked")).map(cb => cb.value);
+  const selected = Array.from(document.querySelectorAll(".prep-chk:checked")).map((cb) => cb.value);
   if (selected.length === 0) return alert("Pilih minimal satu metode preprocessing.");
 
   const formData = new FormData();
   formData.append("methods", selected.join(","));
-  formData.append("ec_level", document.getElementById("regen-ec").value);
 
   await sendAnalysisRequest(`${API_BASE}/api/analyze/preprocess/${currentRecordId}`, formData);
 }
 
 async function customizeRegenerate() {
   if (!currentRecordId) return;
+  const targetEcl = document.getElementById("regen-ec").value;
+
   const formData = new FormData();
-  formData.append("ec_level", document.getElementById("regen-ec").value);
+  formData.append("target_ecl", targetEcl);
   formData.append("box_size", document.getElementById("regen-size").value);
   formData.append("fill_color", document.getElementById("regen-fg").value);
   formData.append("back_color", document.getElementById("regen-bg").value);
 
-  const res = await fetch(`${API_BASE}/api/regenerate/${currentRecordId}`, { method: "POST", body: formData });
-  const data = await res.json();
-  if (!res.ok) return alert(data.detail || "Gagal regenerasi ulang.");
+  try {
+    const res = await fetch(`${API_BASE}/api/analyze/regenerate/${currentRecordId}`, {
+      method: "POST",
+      body: formData,
+    });
+    const data = await res.json();
+    if (!res.ok) return alert(data.detail || "Gagal regenerasi ulang.");
 
-  const imgUrl = `${API_BASE}${data.url}?t=${Date.now()}`;
-  document.getElementById("res-regen-img").src = imgUrl;
-  document.getElementById("download-regen-btn").href = `${API_BASE}${data.url}`;
+    const regenPath = data.regenerated_image_url || data.regeneration?.url;
+    const imgUrl = `${API_BASE}${regenPath}?t=${Date.now()}`;
+    document.getElementById("res-regen-img").src = imgUrl;
+    document.getElementById("download-regen-btn").href = `${API_BASE}${regenPath}`;
+    document.getElementById("res-validation-badge").textContent = data.regeneration?.validated
+      ? `Tervalidasi: Payload Identik dengan Sumber (Target ECL: ${data.regeneration.error_correction || targetEcl})`
+      : "Peringatan Validasi";
+  } catch (err) {
+    alert("Gagal terhubung ke server saat meregenerasi QR Code.");
+  }
 }

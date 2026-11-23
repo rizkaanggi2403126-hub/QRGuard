@@ -75,7 +75,7 @@
     <section id="analyzer" class="view-section">
       <div class="card">
         <h2 style="margin-bottom:0.5rem;">QR Analyzer</h2>
-        <p style="color:var(--text-muted); margin-bottom:1rem;">Pilih metode input QR Code asli milik Anda untuk dianalisis.</p>
+        <p style="color:var(--text-muted); margin-bottom:1rem;">Pilih metode input QR Code asli milik Anda untuk dianalisis secara otomatis.</p>
 
         <div class="tabs">
           <button class="tab-btn active" onclick="switchInputTab('tab-image', this)">Upload Gambar</button>
@@ -103,17 +103,16 @@
         <!-- Tab C: Kamera -->
         <div id="tab-camera" class="input-tab" style="display:none;">
           <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">
-            Memerlukan akses kamera browser (HTTPS atau localhost). Gambar tangkapan akan dianalisis kualitas citranya di server.
+            Kamera menyala otomatis saat tab ini dibuka dan akan mati otomatis setelah gambar berhasil ditangkap.
           </p>
-          <div style="margin-bottom:0.75rem;">
-            <button class="btn btn-outline" onclick="startCamera()">Aktifkan Kamera</button>
-            <button class="btn btn-primary" onclick="captureAndAnalyze()">Tangkap & Analisis QR</button>
-            <button class="btn btn-danger" onclick="stopCamera()">Matikan Kamera</button>
+          <div style="margin-bottom:0.75rem; display:flex; gap:0.5rem; flex-wrap:wrap;">
+            <button class="btn btn-primary" id="btn-capture-camera" onclick="captureAndAnalyze()">Tangkap & Analisis QR</button>
+            <button class="btn btn-outline" id="btn-rescan-camera" onclick="startCamera()" style="display:none;">Scan Ulang</button>
           </div>
+          <div id="camera-alert-box" style="display:none; background:#fef3c7; color:#92400e; border:1px solid #f59e0b; padding:0.75rem 1rem; border-radius:8px; margin-bottom:0.75rem; font-size:0.9rem;"></div>
           <video id="camera-video" autoplay playsinline style="width:100%; max-width:420px; border-radius:10px; border:1px solid var(--border); display:none;"></video>
           <canvas id="camera-canvas" style="display:none;"></canvas>
         </div>
-      </div>
 
       <!-- Hasil Analisis -->
       <div id="analysis-result-container" style="display:none;">
@@ -121,6 +120,17 @@
           <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
             <h3>Hasil Analisis & Pemulihan</h3>
             <span id="res-condition-badge" class="badge"></span>
+          </div>
+
+          <!-- Metadata Error Correction Level Asli (Otomatis / Read-Only) -->
+          <div style="margin-top:0.85rem; padding:0.75rem 1rem; background:var(--accent-soft); border-radius:8px; border-left:4px solid var(--primary); display:flex; flex-wrap:wrap; gap:1.5rem; align-items:center; font-size:0.9rem;">
+            <div>
+              <span style="color:var(--text-muted);">Detected Error Correction Level (ECL Asli):</span>
+              <strong id="res-detected-ecl" style="margin-left:0.35rem; color:var(--primary);">Terdeteksi Otomatis</strong>
+            </div>
+            <div style="color:var(--text-muted); font-size:0.82rem;">
+              (Diekstrak otomatis dari <em>Format Information</em> ISO/IEC 18004 — bersifat tetap dari QR input)
+            </div>
           </div>
 
           <div class="comparison-grid">
@@ -141,28 +151,33 @@
             </div>
           </div>
 
-          <!-- Payload & Action -->
+          <!-- Payload & Kustomisasi Regenerasi -->
           <div style="margin-top:1.25rem;">
             <strong>Status Pembacaan:</strong> <span id="res-decode-msg"></span>
             <div id="payload-section" style="display:none; margin-top:0.75rem;">
               <div style="font-size:0.85rem; color:var(--text-muted);">Jenis Informasi: <strong id="res-payload-type"></strong> (Ditampilkan sebagai teks biasa demi keamanan)</div>
               <div class="payload-box" id="res-payload-text"></div>
 
-              <!-- Kustomisasi Regenerasi -->
-              <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center; margin-top:1rem; padding-top:1rem; border-top:1px solid var(--border);">
-                <label>Error Correction:
-                  <select id="regen-ec">
-                    <option value="L">L (~7%)</option>
-                    <option value="M" selected>M (~15%)</option>
-                    <option value="Q">Q (~25%)</option>
-                    <option value="H">H (~30%)</option>
-                  </select>
-                </label>
-                <label>Ukuran: <input type="number" id="regen-size" value="10" min="4" max="20" style="width:60px;" /></label>
-                <label>Foreground: <input type="color" id="regen-fg" value="#000000" /></label>
-                <label>Background: <input type="color" id="regen-bg" value="#ffffff" /></label>
-                <button class="btn btn-outline" onclick="customizeRegenerate()">Regenerate Ulang</button>
-                <a id="download-regen-btn" class="btn btn-primary" download="QRGuard_Recovered.png">Download QR Baru</a>
+              <!-- Kustomisasi Regenerasi QR Baru -->
+              <div style="margin-top:1rem; padding-top:1rem; border-top:1px solid var(--border);">
+                <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.6rem;">
+                  <strong>Kustomisasi QR Baru (Opsional):</strong> Ubah <em>Target Error Correction</em> jika Anda ingin meningkatkan kapasitas koreksi Reed-Solomon pada QR hasil regenerasi.
+                </div>
+                <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;">
+                  <label>Target ECL (QR Baru):
+                    <select id="regen-ec">
+                      <option value="L">L (~7%)</option>
+                      <option value="M" selected>M (~15%)</option>
+                      <option value="Q">Q (~25%)</option>
+                      <option value="H">H (~30%)</option>
+                    </select>
+                  </label>
+                  <label>Ukuran: <input type="number" id="regen-size" value="10" min="4" max="20" style="width:60px;" /></label>
+                  <label>Foreground: <input type="color" id="regen-fg" value="#000000" /></label>
+                  <label>Background: <input type="color" id="regen-bg" value="#ffffff" /></label>
+                  <button class="btn btn-outline" onclick="customizeRegenerate()">Regenerate Ulang</button>
+                  <a id="download-regen-btn" class="btn btn-primary" download="QRGuard_Recovered.png">Download QR Baru</a>
+                </div>
               </div>
             </div>
           </div>
@@ -178,23 +193,21 @@
           </div>
 
           <div class="card">
-            <h4 style="margin-bottom:0.5rem;">Image Preprocessing (Opsional)</h4>
+            <h4 style="margin-bottom:0.5rem;">Pra-pemrosesan Citra (Opsional)</h4>
             <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">
               Gunakan jika QR Code terdeteksi namun gagal dibaca akibat kontras rendah, buram, atau pencahayaan buruk.
             </p>
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem; font-size:0.9rem; margin-bottom:1rem;">
-              <label><input type="checkbox" value="grayscale" class="prep-chk" checked /> Grayscale</label>
-              <label><input type="checkbox" value="contrast" class="prep-chk" checked /> Contrast (CLAHE)</label>
-              <label><input type="checkbox" value="denoise" class="prep-chk" /> Gaussian Denoising</label>
-              <label><input type="checkbox" value="sharpen" class="prep-chk" /> Sharpening</label>
-              <label><input type="checkbox" value="threshold" class="prep-chk" /> Otsu Thresholding</label>
-              <label><input type="checkbox" value="adaptive_threshold" class="prep-chk" /> Adaptive Threshold</label>
-              <label><input type="checkbox" value="resize" class="prep-chk" /> Upscale Resize</label>
+              <label><input type="checkbox" value="grayscale" class="prep-chk" checked /> Skala Abu-abu (Grayscale)</label>
+              <label><input type="checkbox" value="contrast" class="prep-chk" checked /> Peningkatan Kontras (CLAHE)</label>
+              <label><input type="checkbox" value="denoise" class="prep-chk" /> Pengurangan Derau (Gaussian Denoising)</label>
+              <label><input type="checkbox" value="sharpen" class="prep-chk" /> Penajaman Citra (Sharpening)</label>
+              <label><input type="checkbox" value="threshold" class="prep-chk" /> Pengambangan Global (Otsu Thresholding)</label>
+              <label><input type="checkbox" value="adaptive_threshold" class="prep-chk" /> Pengambangan Adaptif (Adaptive Threshold)</label>
+              <label><input type="checkbox" value="resize" class="prep-chk" /> Perbesaran Resolusi (Upscale Resize)</label>
             </div>
-            <button class="btn btn-primary" onclick="runOptionalPreprocessing()">Jalankan Preprocessing & Baca Ulang</button>
+            <button class="btn btn-primary" onclick="runOptionalPreprocessing()">Jalankan Pra-pemrosesan & Baca Ulang</button>
           </div>
-        </div>
-      </div>
     </section>
 
     <!-- 3. HISTORY -->

@@ -22,6 +22,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 ALLOWED_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+VALID_ECL = {"L", "M", "Q", "H"}
 
 
 def sanitize_filename(filename: str) -> str:
@@ -45,7 +46,6 @@ def _run_full_pipeline(
     image_path: Path,
     original_filename: str,
     input_method: str,
-    ec_level: str = "M",
     box_size: int = 10,
     fill_color: str = "#000000",
     back_color: str = "#FFFFFF",
@@ -56,11 +56,16 @@ def _run_full_pipeline(
         analysis["visual_issues"], qr_result["detected"], qr_result["decoded"]
     )
 
+    # Gunakan ECL asli hasil ekstraksi otomatis (fallback ke "M" jika tidak terbaca)
+    detected_ecl = qr_result.get("detected_ecl") or "M"
+    if detected_ecl not in VALID_ECL:
+        detected_ecl = "M"
+
     regen_info = {
         "regenerated": False,
         "validated": False,
         "url": None,
-        "error_correction": ec_level,
+        "error_correction": detected_ecl,
     }
     saved_regen_rel = None
 
@@ -73,7 +78,7 @@ def _run_full_pipeline(
             box_size=box_size,
             fill_color=fill_color,
             back_color=back_color,
-            error_correction=ec_level,
+            error_correction=detected_ecl,
         )
         saved_regen_rel = f"/outputs/{regen_filename}"
         regen_info = {
@@ -128,6 +133,7 @@ def _run_full_pipeline(
         "preprocessed_image_url": None,
         "regenerated_image_url": saved_regen_rel,
         "condition": condition,
+        "detected_ecl": detected_ecl,
         "analysis": analysis,
         "qr_result": qr_result,
         "regeneration": regen_info,
@@ -138,14 +144,16 @@ def _run_full_pipeline(
 async def analyze_uploaded_image(
     file: UploadFile = File(...),
     input_method: str = Form("upload"),
-    ec_level: str = Form("M"),
     box_size: int = Form(10),
     fill_color: str = Form("#000000"),
     back_color: str = Form("#FFFFFF"),
 ):
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_IMAGE_EXT:
-        raise HTTPException(status_code=400, detail="Format gambar tidak didukung. Gunakan PNG, JPG, JPEG, BMP, atau WEBP.")
+        raise HTTPException(
+            status_code=400,
+            detail="Format gambar tidak didukung. Gunakan PNG, JPG, JPEG, BMP, atau WEBP.",
+        )
 
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
@@ -157,7 +165,7 @@ async def analyze_uploaded_image(
 
     try:
         return _run_full_pipeline(
-            saved_path, file.filename or safe_name, input_method, ec_level, box_size, fill_color, back_color
+            saved_path, file.filename or safe_name, input_method, box_size, fill_color, back_color
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Gagal memproses citra: {str(exc)}")
@@ -177,7 +185,11 @@ async def inspect_pdf(file: UploadFile = File(...)):
     saved_pdf.write_bytes(content)
 
     info = get_pdf_info(str(saved_pdf))
-    return {"pdf_server_filename": safe_name, "original_filename": file.filename, "page_count": info["page_count"]}
+    return {
+        "pdf_server_filename": safe_name,
+        "original_filename": file.filename,
+        "page_count": info["page_count"],
+    }
 
 
 @router.post("/pdf/process")
@@ -185,7 +197,6 @@ async def process_pdf_page(
     pdf_server_filename: str = Form(...),
     original_filename: str = Form(...),
     page_number: int = Form(1),
-    ec_level: str = Form("M"),
 ):
     pdf_path = UPLOAD_DIR / Path(pdf_server_filename).name
     if not pdf_path.exists():
@@ -199,7 +210,6 @@ async def process_pdf_page(
         rendered_path,
         f"{original_filename} (Halaman {page_number})",
         "pdf",
-        ec_level=ec_level,
     )
     result["multi_qr_detected"] = pdf_render_info["multi_qr_detected"]
     return result
@@ -208,8 +218,7 @@ async def process_pdf_page(
 @router.post("/preprocess/{record_id}")
 async def preprocess_existing_record(
     record_id: int,
-    methods: str = Form(...),  # comma-separated: grayscale,contrast,adaptive_threshold
-    ec_level: str = Form("M"),
+    methods: str = Form(...),
 ):
     conn = get_connection()
     row = conn.execute("SELECT * FROM analysis_history WHERE id = ?", (record_id,)).fetchone()
@@ -237,12 +246,16 @@ async def preprocess_existing_record(
         analysis["visual_issues"], qr_result["detected"], qr_result["decoded"]
     )
 
+    detected_ecl = qr_result.get("detected_ecl") or "M"
+    if detected_ecl not in VALID_ECL:
+        detected_ecl = "M"
+
     saved_regen_rel = row["saved_regenerated_path"]
     regen_info = {
         "regenerated": bool(saved_regen_rel),
         "validated": row["validation_status"] == "Tervalidasi",
         "url": saved_regen_rel,
-        "error_correction": ec_level,
+        "error_correction": detected_ecl,
     }
 
     if qr_result["decoded"] and qr_result["payload"]:
@@ -251,7 +264,7 @@ async def preprocess_existing_record(
         regen_res = regenerate_and_validate_qr(
             payload=qr_result["payload"],
             output_path=str(regen_path),
-            error_correction=ec_level,
+            error_correction=detected_ecl,
         )
         saved_regen_rel = f"/outputs/{regen_filename}"
         regen_info = {
@@ -301,7 +314,75 @@ async def preprocess_existing_record(
         "preprocessed_image_url": saved_prep_rel,
         "regenerated_image_url": saved_regen_rel,
         "condition": condition,
+        "detected_ecl": detected_ecl,
         "analysis": analysis,
         "qr_result": qr_result,
         "regeneration": regen_info,
+    }
+
+
+@router.post("/regenerate/{record_id}")
+async def regenerate_existing_record(
+    record_id: int,
+    target_ecl: str = Form("H"),
+    box_size: int = Form(10),
+    fill_color: str = Form("#000000"),
+    back_color: str = Form("#FFFFFF"),
+):
+    ecl = target_ecl.strip().upper()
+    if ecl not in VALID_ECL:
+        raise HTTPException(status_code=400, detail="Target ECL harus salah satu dari L, M, Q, atau H.")
+
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM analysis_history WHERE id = ?", (record_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Riwayat analisis tidak ditemukan.")
+
+    payload = row["payload"]
+    if not payload:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Payload QR tidak tersedia untuk diregenerasi.")
+
+    orig_stem = Path(row["saved_original_path"]).stem
+    regen_filename = f"regen_{ecl}_{orig_stem}.png"
+    regen_path = OUTPUT_DIR / regen_filename
+
+    regen_res = regenerate_and_validate_qr(
+        payload=payload,
+        output_path=str(regen_path),
+        box_size=box_size,
+        fill_color=fill_color,
+        back_color=back_color,
+        error_correction=ecl,
+    )
+
+    saved_regen_rel = f"/outputs/{regen_filename}"
+    conn.execute(
+        """
+        UPDATE analysis_history
+        SET saved_regenerated_path = ?,
+            regeneration_status = ?,
+            validation_status = ?
+        WHERE id = ?
+        """,
+        (
+            saved_regen_rel,
+            "Berhasil" if regen_res["regenerated"] else "Gagal",
+            "Tervalidasi" if regen_res["validated"] else "Belum Tervalidasi",
+            record_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    return {
+        "record_id": record_id,
+        "regenerated_image_url": saved_regen_rel,
+        "regeneration": {
+            "regenerated": regen_res["regenerated"],
+            "validated": regen_res["validated"],
+            "url": saved_regen_rel,
+            "error_correction": regen_res["error_correction"],
+        },
     }
