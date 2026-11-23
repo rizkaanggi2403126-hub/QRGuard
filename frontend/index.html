@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QRGuard — Sistem Analisis & Pemulihan QR Code</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <i data-lucide="shield-check"></i>
+      <span>QRGuard</span>
+    </div>
+    <button class="nav-btn active" data-target="dashboard">
+      <i data-lucide="layout-dashboard"></i><span>Dashboard</span>
+    </button>
+    <button class="nav-btn" data-target="analyzer">
+      <i data-lucide="scan-line"></i><span>QR Analyzer</span>
+    </button>
+    <button class="nav-btn" data-target="history">
+      <i data-lucide="history"></i><span>History</span>
+    </button>
+    <button class="nav-btn" data-target="about">
+      <i data-lucide="book-open"></i><span>About</span>
+    </button>
+  </aside>
+
+  <main class="main-content">
+    <!-- 1. DASHBOARD -->
+    <section id="dashboard" class="view-section active">
+      <div class="card" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+        <div>
+          <h1 style="font-size:1.6rem; margin-bottom:0.4rem;">QRGuard — QR Code Analysis & Recovery</h1>
+          <p style="color:var(--text-muted); max-width:650px;">
+            Sistem analisis kondisi citra QR Code asli, deteksi dan pembacaan payload berbasis mekanisme koreksi kesalahan Reed-Solomon, serta regenerasi QR Code baru yang bersih.
+          </p>
+        </div>
+        <button class="btn btn-primary" onclick="navigateTo('analyzer')">
+          <i data-lucide="qr-code"></i> Mulai Analisis
+        </button>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card"><div style="color:var(--text-muted);">Total Dianalisis</div><div class="stat-value" id="stat-total">0</div></div>
+        <div class="stat-card"><div style="color:var(--text-muted);">Berhasil Dibaca</div><div class="stat-value" style="color:var(--success);" id="stat-decoded">0</div></div>
+        <div class="stat-card"><div style="color:var(--text-muted);">Terdeteksi, Gagal Dibaca</div><div class="stat-value" style="color:var(--warning);" id="stat-failed">0</div></div>
+        <div class="stat-card"><div style="color:var(--text-muted);">Berhasil Diregenerasi</div><div class="stat-value" style="color:var(--accent-purple);" id="stat-regen">0</div></div>
+      </div>
+
+      <div class="comparison-grid">
+        <div class="card">
+          <h3 style="margin-bottom:1rem;">Distribusi Kondisi QR Code</h3>
+          <canvas id="conditionChart" height="200"></canvas>
+        </div>
+        <div class="card">
+          <h3 style="margin-bottom:1rem;">Riwayat Analisis Terbaru</h3>
+          <div style="overflow-x:auto;">
+            <table>
+              <thead>
+                <tr><th>Waktu</th><th>File</th><th>Kondisi</th><th>Status</th></tr>
+              </thead>
+              <tbody id="recent-history-body">
+                <tr><td colspan="4" style="color:var(--text-muted);">Belum ada data analisis.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. QR ANALYZER -->
+    <section id="analyzer" class="view-section">
+      <div class="card">
+        <h2 style="margin-bottom:0.5rem;">QR Analyzer</h2>
+        <p style="color:var(--text-muted); margin-bottom:1rem;">Pilih metode input QR Code asli milik Anda untuk dianalisis.</p>
+
+        <div class="tabs">
+          <button class="tab-btn active" onclick="switchInputTab('tab-image', this)">Upload Gambar</button>
+          <button class="tab-btn" onclick="switchInputTab('tab-pdf', this)">Upload Dokumen PDF</button>
+          <button class="tab-btn" onclick="switchInputTab('tab-camera', this)">Scan Kamera</button>
+        </div>
+
+        <!-- Tab A: Upload Gambar -->
+        <div id="tab-image" class="input-tab">
+          <input type="file" id="image-input" accept=".png,.jpg,.jpeg,.bmp,.webp" style="margin-bottom:1rem; display:block;" />
+          <button class="btn btn-primary" onclick="submitImageAnalysis()">Analisis Gambar QR</button>
+        </div>
+
+        <!-- Tab B: Upload PDF -->
+        <div id="tab-pdf" class="input-tab" style="display:none;">
+          <input type="file" id="pdf-input" accept=".pdf" style="margin-bottom:1rem; display:block;" />
+          <button class="btn btn-outline" onclick="inspectPdfFile()">Muat Halaman PDF</button>
+          <div id="pdf-page-selector" style="display:none; margin-top:1rem;">
+            <label>Pilih Halaman PDF: </label>
+            <select id="pdf-page-select" style="padding:0.4rem; border-radius:6px; margin:0 0.5rem;"></select>
+            <button class="btn btn-primary" onclick="submitPdfPageAnalysis()">Analisis Halaman Ini</button>
+          </div>
+        </div>
+
+        <!-- Tab C: Kamera -->
+        <div id="tab-camera" class="input-tab" style="display:none;">
+          <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">
+            Memerlukan akses kamera browser (HTTPS atau localhost). Gambar tangkapan akan dianalisis kualitas citranya di server.
+          </p>
+          <div style="margin-bottom:0.75rem;">
+            <button class="btn btn-outline" onclick="startCamera()">Aktifkan Kamera</button>
+            <button class="btn btn-primary" onclick="captureAndAnalyze()">Tangkap & Analisis QR</button>
+            <button class="btn btn-danger" onclick="stopCamera()">Matikan Kamera</button>
+          </div>
+          <video id="camera-video" autoplay playsinline style="width:100%; max-width:420px; border-radius:10px; border:1px solid var(--border); display:none;"></video>
+          <canvas id="camera-canvas" style="display:none;"></canvas>
+        </div>
+      </div>
+
+      <!-- Hasil Analisis -->
+      <div id="analysis-result-container" style="display:none;">
+        <div class="card">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+            <h3>Hasil Analisis & Pemulihan</h3>
+            <span id="res-condition-badge" class="badge"></span>
+          </div>
+
+          <div class="comparison-grid">
+            <div class="img-box">
+              <strong>1. QR Code Asli</strong>
+              <div><img id="res-orig-img" alt="QR Asli" /></div>
+              <small id="res-basic-info" style="color:var(--text-muted);"></small>
+            </div>
+            <div class="img-box" id="res-prep-box" style="display:none;">
+              <strong>2. Hasil Preprocessing</strong>
+              <div><img id="res-prep-img" alt="QR Preprocessing" /></div>
+              <small style="color:var(--text-muted);">Citra ditingkatkan tanpa mengubah file asli</small>
+            </div>
+            <div class="img-box" id="res-regen-box" style="display:none;">
+              <strong>3. QR Code Baru (Hasil Regenerasi)</strong>
+              <div><img id="res-regen-img" alt="QR Regenerasi" /></div>
+              <small id="res-validation-badge" style="color:var(--success); font-weight:600;"></small>
+            </div>
+          </div>
+
+          <!-- Payload & Action -->
+          <div style="margin-top:1.25rem;">
+            <strong>Status Pembacaan:</strong> <span id="res-decode-msg"></span>
+            <div id="payload-section" style="display:none; margin-top:0.75rem;">
+              <div style="font-size:0.85rem; color:var(--text-muted);">Jenis Informasi: <strong id="res-payload-type"></strong> (Ditampilkan sebagai teks biasa demi keamanan)</div>
+              <div class="payload-box" id="res-payload-text"></div>
+
+              <!-- Kustomisasi Regenerasi -->
+              <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center; margin-top:1rem; padding-top:1rem; border-top:1px solid var(--border);">
+                <label>Error Correction:
+                  <select id="regen-ec">
+                    <option value="L">L (~7%)</option>
+                    <option value="M" selected>M (~15%)</option>
+                    <option value="Q">Q (~25%)</option>
+                    <option value="H">H (~30%)</option>
+                  </select>
+                </label>
+                <label>Ukuran: <input type="number" id="regen-size" value="10" min="4" max="20" style="width:60px;" /></label>
+                <label>Foreground: <input type="color" id="regen-fg" value="#000000" /></label>
+                <label>Background: <input type="color" id="regen-bg" value="#ffffff" /></label>
+                <button class="btn btn-outline" onclick="customizeRegenerate()">Regenerate Ulang</button>
+                <a id="download-regen-btn" class="btn btn-primary" download="QRGuard_Recovered.png">Download QR Baru</a>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Kualitas Citra & Preprocessing Opsional -->
+        <div class="comparison-grid">
+          <div class="card">
+            <h4 style="margin-bottom:0.75rem;">Metrik Kualitas Citra</h4>
+            <ul id="res-metrics-list" style="padding-left:1.2rem; line-height:1.7; font-size:0.92rem;"></ul>
+            <h4 style="margin:0.85rem 0 0.4rem;">Identifikasi Gangguan Visual</h4>
+            <ul id="res-issues-list" style="padding-left:1.2rem; line-height:1.6; font-size:0.92rem; color:var(--warning);"></ul>
+          </div>
+
+          <div class="card">
+            <h4 style="margin-bottom:0.5rem;">Image Preprocessing (Opsional)</h4>
+            <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">
+              Gunakan jika QR Code terdeteksi namun gagal dibaca akibat kontras rendah, buram, atau pencahayaan buruk.
+            </p>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem; font-size:0.9rem; margin-bottom:1rem;">
+              <label><input type="checkbox" value="grayscale" class="prep-chk" checked /> Grayscale</label>
+              <label><input type="checkbox" value="contrast" class="prep-chk" checked /> Contrast (CLAHE)</label>
+              <label><input type="checkbox" value="denoise" class="prep-chk" /> Gaussian Denoising</label>
+              <label><input type="checkbox" value="sharpen" class="prep-chk" /> Sharpening</label>
+              <label><input type="checkbox" value="threshold" class="prep-chk" /> Otsu Thresholding</label>
+              <label><input type="checkbox" value="adaptive_threshold" class="prep-chk" /> Adaptive Threshold</label>
+              <label><input type="checkbox" value="resize" class="prep-chk" /> Upscale Resize</label>
+            </div>
+            <button class="btn btn-primary" onclick="runOptionalPreprocessing()">Jalankan Preprocessing & Baca Ulang</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. HISTORY -->
+    <section id="history" class="view-section">
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem; margin-bottom:1rem;">
+          <h2>Riwayat Analisis QR Code</h2>
+          <input type="text" id="history-search" placeholder="Cari nama file atau tanggal..." onkeyup="loadHistory()" style="padding:0.55rem 0.85rem; border:1px solid var(--border); border-radius:8px; width:260px;" />
+        </div>
+        <div style="overflow-x:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>Tanggal</th><th>Nama File</th><th>Input</th><th>Kondisi</th><th>Decoding</th><th>Regenerasi</th><th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="history-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. ABOUT & REED-SOLOMON -->
+    <section id="about" class="view-section">
+      <div class="card">
+        <h2 style="margin-bottom:0.75rem;">Tentang QRGuard & Konsep Reed-Solomon Code</h2>
+        <p style="line-height:1.7; margin-bottom:1rem;">
+          <strong>QRGuard</strong> adalah sistem analisis dan pemulihan QR Code berbasis web yang dikembangkan untuk mempelajari penerapan teori pengkodean (<em>Coding Theory</em>), khususnya <strong>Reed-Solomon Error Correction</strong> pada standar ISO/IEC 18004 (QR Code).
+        </p>
+
+        <h3 style="margin:1rem 0 0.5rem;">1. Pengertian & Fungsi Reed-Solomon pada QR Code</h3>
+        <p style="line-height:1.7; margin-bottom:1rem;">
+          <strong>Reed-Solomon Code</strong> adalah kode koreksi kesalahan non-biner berbasis blok yang bekerja pada tingkat simbol (<strong>codeword</strong> berukuran 8-bit / 1 byte). Pada QR Code, algoritma ini menambahkan <em>error correction codewords</em> ke dalam deretan <em>data codewords</em> sehingga scanner tetap dapat memulihkan data asli meskipun sebagian modul QR Code kotor, tergores, atau tertutup.
+        </p>
+
+        <h3 style="margin:1rem 0 0.5rem;">2. Struktur Matematis: GF(256) & Polinomial</h3>
+        <ul style="padding-left:1.25rem; line-height:1.75; margin-bottom:1rem;">
+          <li><strong>Finite Field GF(2<sup>8</sup>) / GF(256):</strong> Seluruh operasi aritmetika codeword dilakukan pada medan hingga Galois berisi 256 elemen menggunakan polinomial primitif standar QR Code: $P(x) = x^8 + x^4 + x^3 + x^2 + 1$.</li>
+          <li><strong>Polynomial Representation:</strong> Deretan $k$ data codeword direpresentasikan sebagai polinomial pesan $M(x) = m_{k-1}x^{k-1} + \dots + m_1x + m_0$.</li>
+          <li><strong>Generator Polynomial $G(x)$:</strong> Dibentuk dari perkalian faktor linear $G(x) = \prod_{i=0}^{n-k-1} (x - \alpha^i)$, di mana $\alpha$ adalah elemen primitif di $GF(256)$.</li>
+          <li><strong>Encoding & Error Correction:</strong> Sisa pembagian polinomial $R(x) = (M(x) \cdot x^{n-k}) \bmod G(x)$ menghasilkan codeword paritas. Saat decoding, sindrom kesalahan dihitung; jika sindrom bernilai nol tidak ada kesalahan, sedangkan jika tidak nol lokasi dan besar kesalahan pada codeword dikoreksi selama jumlah kesalahan tidak melebihi batas $\lfloor (n-k)/2 \rfloor$.</li>
+        </ul>
+
+        <h3 style="margin:1rem 0 0.5rem;">3. Tingkat Error Correction QR Code</h3>
+        <table style="max-width:500px; margin-bottom:1rem;">
+          <thead><tr><th>Level</th><th>Perkiraan Kapasitas Koreksi Codeword</th></tr></thead>
+          <tbody>
+            <tr><td><strong>L (Low)</strong></td><td>~7% codeword dapat dikoreksi</td></tr>
+            <tr><td><strong>M (Medium)</strong></td><td>~15% codeword dapat dikoreksi</td></tr>
+            <tr><td><strong>Q (Quartile)</strong></td><td>~25% codeword dapat dikoreksi</td></tr>
+            <tr><td><strong>H (High)</strong></td><td>~30% codeword dapat dikoreksi</td></tr>
+          </tbody>
+        </table>
+
+        <div style="background:var(--accent-soft); padding:1rem; border-radius:8px; border-left:4px solid var(--primary); line-height:1.65;">
+          <strong>Klarifikasi Akademis Penting:</strong>
+          <ul style="padding-left:1.2rem; margin-top:0.4rem;">
+            <li>Persentase kapasitas di atas mengacu pada jumlah <strong>codeword</strong> yang dapat dikoreksi, bukan persentase luas piksel gambar yang rusak (misalnya, kerusakan kecil tepat pada <em>finder pattern</em> atau <em>format information</em> dapat menggagalkan pembacaan meskipun luasnya kecil).</li>
+            <li>QRGuard memisahkan secara tegas antara <strong>analisis kualitas citra</strong> (blur, kontras, kecerahan), <strong>decoding internal standar QR</strong>, dan <strong>regenerasi QR Code baru</strong> dari payload yang telah berhasil dibaca.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="js/config.js"></script>
+  <script src="js/camera.js"></script>
+  <script src="js/analyzer.js"></script>
+  <script src="js/history.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
